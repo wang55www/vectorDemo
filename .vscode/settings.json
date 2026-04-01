@@ -1,0 +1,110 @@
+{
+  // Go 扩展设置
+  "go.goroot": "",
+  "go.gopath": "",
+  "go.toolsGopath": "",
+
+  // 启用 gopls 语言服务器
+  "go.useLanguageServer": true,
+  "gopls": {
+    "ui.semanticTokens": true,
+    "ui.completion.usePlaceholders": true,
+    "ui.diagnostic.analyses": {
+      "unusedparams": true,
+      "unusedwrite": true,
+      "fieldalignment": false,
+      "shadow": true
+    },
+    "formatting.gofumpt": true,
+    "build.buildFlags": ["-tags=integration"],
+    "staticcheck": true
+  },
+
+  // 格式化设置
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "golang.go",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "[go.mod]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+
+  // Go 工具设置
+  "go.formatTool": "gofumpt",
+  "go.lintTool": "staticcheck",
+  "go.lintOnSave": "file",
+  "go.vetOnSave": "file",
+
+  // 测试设置
+  "go.testFlags": ["-v", "-count=1"],
+  "go.testTimeout": "30s",
+  "go.coverOnSave": false,
+  "go.coverageDecorator": {
+    "type": "gutter",
+    "coveredHighlightColor": "rgba(64,128,64,0.5)",
+    "uncoveredHighlightColor": "rgba(128,64,64,0.5)"
+  },
+  "go.testExplorer.enable": true,
+
+  // 代码补全设置
+  "go.autocompleteUnimportedPackages": true,
+  "go.gocodePackageLookupMode": "go",
+  "go.inferGopath": false,
+
+  // 构建标签
+  "go.buildTags": "",
+  "go.installDependenciesWhenBuilding": true,
+
+  // 工具安装
+  "go.toolsManagement.autoUpdate": true,
+
+  // Delve 调试器设置
+  "go.delveConfig": {
+    "dlvLoadConfig": {
+      "followPointers": true,
+      "maxVariableRecurse": 1,
+      "maxStringLen": 120,
+      "maxArrayValues": 64,
+      "maxStructFields": -1
+    },
+    "apiVersion": 2,
+    "showGlobalVariables": true,
+    "debugAdapter": "dlv-dap"
+  },
+
+  // 代码片段建议
+  "editor.snippetSuggestions": "top",
+  "editor.tabCompletion": "on",
+
+  // 文件相关
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+
+  // 文件排除
+  "files.exclude": {
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/bin": true,
+    "**/vendor": false
+  },
+  "search.exclude": {
+    "**/bin": true,
+    "**/vendor": true
+  },
+
+  // Go 模块设置
+  "go.enableCodeLens": {
+    "references": true,
+    "runtest": true
+  },
+
+  // 诊断设置
+  "diagnostic.errorBackground": true
+}
