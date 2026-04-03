@@ -79,7 +79,13 @@ func (r *ImageRepository) InsertImage(image *model.Image) (int64, error) {
 	return result.LastInsertId()
 }
 
-func (r *ImageRepository) SearchSimilarImages(vectorStr string, limit int) ([]model.Image, error) {
+// SearchResult 包含图片和相似度
+type SearchResult struct {
+	model.Image
+	Similarity float64
+}
+
+func (r *ImageRepository) SearchSimilarImages(vectorStr string, limit int) ([]SearchResult, error) {
 	// Use TiDB's vector distance function (cosine distance)
 	query := fmt.Sprintf(`
 		SELECT id, image_url, description, created_at,
@@ -96,17 +102,17 @@ func (r *ImageRepository) SearchSimilarImages(vectorStr string, limit int) ([]mo
 	}
 	defer rows.Close()
 
-	var images []model.Image
+	var results []SearchResult
 	for rows.Next() {
 		var img model.Image
 		var similarity float64
 		if err := rows.Scan(&img.ID, &img.ImageURL, &img.Description, &img.CreatedAt, &similarity); err != nil {
 			return nil, fmt.Errorf("failed to scan image: %w", err)
 		}
-		images = append(images, img)
+		results = append(results, SearchResult{Image: img, Similarity: similarity})
 	}
 
-	return images, nil
+	return results, nil
 }
 
 func (r *ImageRepository) Close() error {

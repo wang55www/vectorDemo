@@ -1,0 +1,22 @@
+<html>
+<head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>404 Not Found</title>
+</head>
+<body>
+<table border='0' cellpadding="0" cellspacing="0" width="400px" align="center" style="margin-top:50px;">
+<tr>
+<td bgcolor="#cbebf7"><img src="/images/404.gif" width="200" height="37" border="0"></td>
+</tr>
+<tr>
+<td style='border:1px solid gray;padding:10px;color:#004a76;font-family:Arial,Helvetica;font-size: 9pt;'>
+An error occurred that prevented this page from being displayed. This could be due to one of the following reasons:
+<br><br>
+- An internal islamtimes.org error occurred.<br>
+- A URL was incorrectly entered.<br>
+- The file no longer exists. 
+</td>
+</tr>
+</table>
+</body>
+</html>

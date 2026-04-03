@@ -2,20 +2,33 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"vectorDemo/internal/model"
 	"vectorDemo/internal/repository"
 	"vectorDemo/internal/service"
 )
 
+const (
+	UploadDir = "./uploads"
+)
+
 type Handler struct {
 	repo         *repository.ImageRepository
-	embeddingSvc *service.EmbeddingService
+	embeddingSvc service.EmbeddingServiceInterface
 }
 
-func NewHandler(repo *repository.ImageRepository, embeddingSvc *service.EmbeddingService) *Handler {
+func NewHandler(repo *repository.ImageRepository, embeddingSvc service.EmbeddingServiceInterface) *Handler {
+	// 创建上传目录
+	if err := os.MkdirAll(UploadDir, 0755); err != nil {
+		panic(fmt.Sprintf("failed to create upload directory: %v", err))
+	}
 	return &Handler{
 		repo:         repo,
 		embeddingSvc: embeddingSvc,
@@ -23,56 +36,129 @@ func NewHandler(repo *repository.ImageRepository, embeddingSvc *service.Embeddin
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	switch r.URL.Path {
-	case "/health":
-		h.Health(w, r)
-	case "/api/images":
-		if r.Method == http.MethodPost {
-			h.UploadImage(w, r)
-		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
-	case "/api/images/search":
-		if r.Method == http.MethodPost {
-			h.SearchImage(w, r)
-		} else {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		}
+	path := r.URL.Path
+	
+	// 处理静态文件服务（/uploads/ 目录）
+	if strings.HasPrefix(path, "/uploads/") {
+		fileName := strings.TrimPrefix(path, "/uploads/")
+		filePath := filepath.Join(UploadDir, fileName)
+		http.ServeFile(w, r, filePath)
+		return
+	}
+	
+	switch {
+	case path == "/api/images" && r.Method == http.MethodPost:
+		h.UploadImage(w, r)
+	case path == "/api/images/search" && r.Method == http.MethodPost:
+		h.SearchImage(w, r)
+	case path == "/health" && r.Method == http.MethodGet:
+		h.HealthCheck(w, r)
 	default:
-		http.Error(w, "Not found", http.StatusNotFound)
+		http.NotFound(w, r)
 	}
 }
 
+func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type UploadRequest struct {
+	ImageURL    string `json:"image_url"`
+	Description string `json:"description"`
+}
+
+type UploadResponse struct {
+	ID          int64  `json:"id"`
+	ImageURL    string `json:"image_url"`
+	Description string `json:"description"`
+}
+
+type SearchRequest struct {
+	Query string `json:"query"`
+}
+
+type SearchResult struct {
+	ID         int64   `json:"id"`
+	ImageURL   string  `json:"image_url"`
+	Description string  `json:"description"`
+	Similarity float64 `json:"similarity"`
+}
+
+type SearchResponse struct {
+	Results []SearchResult `json:"results"`
+}
+
 func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "failed to read request body")
-		return
-	}
+	contentType := r.Header.Get("Content-Type")
+	var imageURL, description string
+	var embedding []float64
+	var err error
 
-	var req model.UploadImageRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid JSON format")
-		return
-	}
+	if strings.HasPrefix(contentType, "application/json") {
+		// JSON 格式上传（URL 方式）
+		var req UploadRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+			return
+		}
 
-	if req.ImageURL == "" {
-		writeJSONError(w, http.StatusBadRequest, "image_url is required")
-		return
-	}
+		imageURL = req.ImageURL
+		description = req.Description
 
-	// Get image embedding from Jina API
-	embedding, err := h.embeddingSvc.GetImageEmbedding(req.ImageURL)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "failed to get embedding: "+err.Error())
-		return
+		// 使用文字描述生成向量
+		if description == "" {
+			description = "图片"
+		}
+		embedding, err = h.embeddingSvc.GetTextEmbedding(description)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to get embedding: "+err.Error())
+			return
+		}
+
+	} else if strings.HasPrefix(contentType, "multipart/form-data") {
+		// FormData 格式上传（本地文件）
+		file, header, err := r.FormFile("image")
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "failed to get file: "+err.Error())
+			return
+		}
+		defer file.Close()
+
+		fileData, err := io.ReadAll(file)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to read file: "+err.Error())
+			return
+		}
+
+		// 生成唯一文件名
+		timestamp := time.Now().UnixNano()
+		filename := fmt.Sprintf("%d%s", timestamp, filepath.Ext(header.Filename))
+		filepath := filepath.Join(UploadDir, filename)
+
+		// 保存文件到本地
+		if err := os.WriteFile(filepath, fileData, 0644); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to save file: "+err.Error())
+			return
+		}
+
+		// 构建可访问的 URL
+		imageURL = fmt.Sprintf("http://localhost:8080/uploads/%s", filename)
+		description = r.FormValue("description")
+
+		// 使用本地图片文件生成向量（支持多模态嵌入）
+		localFilePath := filepath
+		embedding, err = h.embeddingSvc.GetImageEmbeddingFromFilePath(localFilePath)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "failed to get image embedding: "+err.Error())
+			return
+		}
 	}
 
 	vectorStr := h.embeddingSvc.VectorToString(embedding)
 
 	image := &model.Image{
-		ImageURL:    req.ImageURL,
-		Description: req.Description,
+		ImageURL:    imageURL,
+		Description: description,
 		Vector:      vectorStr,
 	}
 
@@ -82,33 +168,28 @@ func (h *Handler) UploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":          id,
-		"image_url":   req.ImageURL,
-		"description": req.Description,
+	writeJSON(w, http.StatusOK, UploadResponse{
+		ID:          id,
+		ImageURL:    imageURL,
+		Description: description,
 	})
 }
 
+// SearchImage 通过文字描述搜索相似图片
 func (h *Handler) SearchImage(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "failed to read request body")
+	var req SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
 
-	var req model.SearchImageRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid JSON format")
+	if req.Query == "" {
+		writeJSONError(w, http.StatusBadRequest, "query is required")
 		return
 	}
 
-	if req.ImageURL == "" {
-		writeJSONError(w, http.StatusBadRequest, "image_url is required")
-		return
-	}
-
-	// Get query image embedding from Jina API
-	embedding, err := h.embeddingSvc.GetImageEmbedding(req.ImageURL)
+	// Get text embedding
+	embedding, err := h.embeddingSvc.GetTextEmbedding(req.Query)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to get embedding: "+err.Error())
 		return
@@ -116,37 +197,24 @@ func (h *Handler) SearchImage(w http.ResponseWriter, r *http.Request) {
 
 	vectorStr := h.embeddingSvc.VectorToString(embedding)
 
-	// Search for similar images
-	images, err := h.repo.SearchSimilarImages(vectorStr, 5)
+	// Search similar images
+	results, err := h.repo.SearchSimilarImages(vectorStr, 10)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "failed to search images: "+err.Error())
 		return
 	}
 
-	if len(images) == 0 {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"message": "no similar images found",
-			"results": []model.SearchImageResponse{},
-		})
-		return
-	}
-
-	results := make([]model.SearchImageResponse, len(images))
-	for i, img := range images {
-		results[i] = model.SearchImageResponse{
-			ID:          img.ID,
-			Description: img.Description,
-			ImageURL:    img.ImageURL,
+	searchResults := make([]SearchResult, len(results))
+	for i, r := range results {
+		searchResults[i] = SearchResult{
+			ID:         int64(r.ID),
+			ImageURL:   r.ImageURL,
+			Description: r.Description,
+			Similarity: r.Similarity,
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"results": results,
-	})
-}
-
-func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeJSON(w, http.StatusOK, SearchResponse{Results: searchResults})
 }
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

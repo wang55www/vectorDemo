@@ -1,0 +1,41 @@
+# 图片向量搜索服务配置
+
+# TiDB 数据库配置
+[tidb]
+host = "127.0.0.1"
+port = 4000
+user = "root"
+password = "tidb"
+database = "vector_demo"
+
+# 嵌入 API 配置（支持多服务商）
+[embedding]
+# 服务商：dashscope | baidu | jina | cohere
+provider = "dashscope"
+
+# 阿里云 DashScope 配置（多模态嵌入）
+[dashscope]
+api_url = "https://dashscope.aliyuncs.com/api/v1/services/embeddings/multimodal-embedding/multimodal-embedding"
+api_key = "sk-4b916880d29e4c51ac6b4bd836194753"
+model = "qwen3-vl-embedding"
+vector_dimension = 2560
+
+# 百度千帆配置
+[baidu]
+api_key = "你的百度 API Key"
+secret_key = "你的百度 Secret Key"
+model = "embedding-v1"
+
+# Jina API 配置（备用）
+[jina]
+api_url = "https://api.jina.ai/v1/embeddings"
+api_key = "jina_1789bc1b3714423ba7a86e665ebdc0c1yLlcx4LOSC9kNzAD16Z8AvUpcozI"
+proxy = ""
+
+# HTTP 服务配置
+[server]
+port = 8080
+
+# MCP 服务配置
+[mcpserver]
+port = 8081

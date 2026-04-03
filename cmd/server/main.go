@@ -34,8 +34,21 @@ func main() {
 	}
 	log.Println("Database schema initialized")
 
-	// Initialize services
-	embeddingSvc := service.NewEmbeddingService(&cfg.Jina)
+	// Initialize services (使用阿里云 DashScope 多模态嵌入服务)
+	var embeddingSvc service.EmbeddingServiceInterface
+	
+	if cfg.Embedding.Provider == "dashscope" {
+		if cfg.DashScope.APIKey == "" {
+			log.Fatal("DashScope API Key is not configured. Please set api_key in config.toml")
+		}
+		dashScopeSvc := service.NewDashScopeServiceWithConfig(&cfg.DashScope)
+		embeddingSvc = dashScopeSvc
+		log.Printf("Using Alibaba Cloud DashScope (%s) for multimodal embeddings", cfg.DashScope.Model)
+	} else {
+		// 备用：使用 Jina
+		embeddingSvc = service.NewEmbeddingService(&cfg.Jina)
+		log.Println("Using Jina API for embeddings")
+	}
 
 	// Initialize handlers
 	h := handler.NewHandler(repo, embeddingSvc)

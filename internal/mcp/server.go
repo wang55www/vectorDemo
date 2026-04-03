@@ -7,14 +7,15 @@ import (
 	"net/http"
 	"sync"
 
+	"vectorDemo/internal/model"
 	"vectorDemo/internal/repository"
 	"vectorDemo/internal/service"
 )
 
-// MCPServer implements a simple MCP server using SSE
+// MCPServer implements MCP service with skill-based interface
 type MCPServer struct {
 	repo         *repository.ImageRepository
-	embeddingSvc *service.EmbeddingService
+	embeddingSvc service.EmbeddingServiceInterface
 	mu           sync.Mutex
 	clients      map[string]bool
 }
@@ -55,7 +56,7 @@ type InitializeResult struct {
 	ServerInfo      map[string]string      `json:"serverInfo"`
 }
 
-func NewMCPServer(repo *repository.ImageRepository, embeddingSvc *service.EmbeddingService) *MCPServer {
+func NewMCPServer(repo *repository.ImageRepository, embeddingSvc service.EmbeddingServiceInterface) *MCPServer {
 	return &MCPServer{
 		repo:         repo,
 		embeddingSvc: embeddingSvc,
@@ -135,9 +136,7 @@ func (s *MCPServer) processRequest(req *JSONRPCRequest) *JSONRPCResponse {
 			ID:      req.ID,
 			Result: InitializeResult{
 				ProtocolVersion: "2024-11-05",
-				Capabilities: map[string]interface{}{
-					"tools": map[string]interface{}{},
-				},
+				Capabilities: map[string]interface{}{},
 				ServerInfo: map[string]string{
 					"name":    "Image Vector Search",
 					"version": "1.0.0",
@@ -152,17 +151,35 @@ func (s *MCPServer) processRequest(req *JSONRPCRequest) *JSONRPCResponse {
 			Result: map[string]interface{}{
 				"tools": []ToolDefinition{
 					{
-						Name:        "search_similar_images",
-						Description: "Search for similar images by providing an image URL. Returns descriptions of the most similar images stored in the database.",
+						Name:        "save_image",
+						Description: "保存图片到平凯数据库。当用户提供了图片地址并说'保存到平凯数据库'时使用此工具。",
 						InputSchema: map[string]interface{}{
 							"type": "object",
 							"properties": map[string]interface{}{
 								"image_url": map[string]interface{}{
 									"type":        "string",
-									"description": "The URL of the image to search for similar images",
+									"description": "图片的URL地址",
+								},
+								"description": map[string]interface{}{
+									"type":        "string",
+									"description": "图片描述信息",
 								},
 							},
 							"required": []string{"image_url"},
+						},
+					},
+					{
+						Name:        "search_images",
+						Description: "通过文字描述搜索相似图片。当用户说'我要找一张xx的照片'时使用此工具，将xx作为查询文本。",
+						InputSchema: map[string]interface{}{
+							"type": "object",
+							"properties": map[string]interface{}{
+								"query": map[string]interface{}{
+									"type":        "string",
+									"description": "搜索关键词，如'风景'、'动物'等",
+								},
+							},
+							"required": []string{"query"},
 						},
 					},
 				},
@@ -196,74 +213,139 @@ func (s *MCPServer) handleToolCall(req *JSONRPCRequest) *JSONRPCResponse {
 	}
 
 	switch params.Name {
-	case "search_similar_images":
-		imageURL, ok := params.Arguments["image_url"].(string)
-		if !ok {
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &RPCError{Code: -32602, Message: "image_url is required"},
-			}
-		}
-
-		embedding, err := s.embeddingSvc.GetImageEmbedding(imageURL)
-		if err != nil {
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &RPCError{Code: -32603, Message: fmt.Sprintf("Failed to get embedding: %v", err)},
-			}
-		}
-
-		vectorStr := s.embeddingSvc.VectorToString(embedding)
-		images, err := s.repo.SearchSimilarImages(vectorStr, 5)
-		if err != nil {
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &RPCError{Code: -32603, Message: fmt.Sprintf("Failed to search images: %v", err)},
-			}
-		}
-
-		if len(images) == 0 {
-			return &JSONRPCResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result: map[string]interface{}{
-					"content": []map[string]interface{}{
-						{
-							"type": "text",
-							"text": "No similar images found in the database.",
-						},
-					},
-				},
-			}
-		}
-
-		result := "Found similar images:\n"
-		for i, img := range images {
-			result += fmt.Sprintf("%d. Description: %s, Image URL: %s\n", i+1, img.Description, img.ImageURL)
-		}
-
-		return &JSONRPCResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: map[string]interface{}{
-				"content": []map[string]interface{}{
-					{
-						"type": "text",
-						"text": result,
-					},
-				},
-			},
-		}
-
+	case "save_image":
+		return s.handleSaveImage(req.ID, params.Arguments)
+	case "search_images":
+		return s.handleSearchImages(req.ID, params.Arguments)
 	default:
 		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Error:   &RPCError{Code: -32602, Message: "Unknown tool: " + params.Name},
 		}
+	}
+}
+
+// handleSaveImage 处理保存图片到平凯数据库
+func (s *MCPServer) handleSaveImage(id interface{}, args map[string]interface{}) *JSONRPCResponse {
+	imageURL, ok := args["image_url"].(string)
+	if !ok || imageURL == "" {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: -32602, Message: "image_url is required"},
+		}
+	}
+
+	description := ""
+	if desc, ok := args["description"].(string); ok {
+		description = desc
+	}
+
+	// Get image embedding from Jina API
+	embedding, err := s.embeddingSvc.GetImageEmbedding(imageURL)
+	if err != nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: -32603, Message: fmt.Sprintf("Failed to get embedding: %v", err)},
+		}
+	}
+
+	vectorStr := s.embeddingSvc.VectorToString(embedding)
+
+	// Insert into database
+	image := &model.Image{
+		ImageURL:    imageURL,
+		Description: description,
+		Vector:      vectorStr,
+	}
+
+	_, err = s.repo.InsertImage(image)
+	if err != nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: -32603, Message: fmt.Sprintf("Failed to save image: %v", err)},
+		}
+	}
+
+	return &JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": fmt.Sprintf("图片已成功保存到平凯数据库！\n图片地址: %s\n描述: %s", imageURL, description),
+				},
+			},
+		},
+	}
+}
+
+// handleSearchImages 处理文字搜索图片
+func (s *MCPServer) handleSearchImages(id interface{}, args map[string]interface{}) *JSONRPCResponse {
+	query, ok := args["query"].(string)
+	if !ok || query == "" {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: -32602, Message: "query is required"},
+		}
+	}
+
+	// Get text embedding from Jina API
+	embedding, err := s.embeddingSvc.GetTextEmbedding(query)
+	if err != nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: -32603, Message: fmt.Sprintf("Failed to get embedding: %v", err)},
+		}
+	}
+
+	vectorStr := s.embeddingSvc.VectorToString(embedding)
+	searchResults, err := s.repo.SearchSimilarImages(vectorStr, 5)
+	if err != nil {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Error:   &RPCError{Code: -32603, Message: fmt.Sprintf("Failed to search images: %v", err)},
+		}
+	}
+
+	if len(searchResults) == 0 {
+		return &JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      id,
+			Result: map[string]interface{}{
+				"content": []map[string]interface{}{
+					{
+						"type": "text",
+						"text": fmt.Sprintf("未找到与'%s'相似的图片。", query),
+					},
+				},
+			},
+		}
+	}
+
+	result := fmt.Sprintf("为您找到 %d 张与'%s'相似的图片：\n\n", len(searchResults), query)
+	for i, r := range searchResults {
+		result += fmt.Sprintf("%d. 描述: %s\n   图片地址: %s\n   相似度: %.4f\n\n", i+1, r.Description, r.ImageURL, r.Similarity)
+	}
+
+	return &JSONRPCResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Result: map[string]interface{}{
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": result,
+				},
+			},
+		},
 	}
 }
 

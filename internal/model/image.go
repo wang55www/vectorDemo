@@ -10,18 +10,21 @@ type Image struct {
 	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 }
 
+// UploadImageRequest 支持URL或本地文件上传
 type UploadImageRequest struct {
 	ImageURL    string `form:"image_url" json:"image_url"`
 	Description string `form:"description" json:"description"`
 }
 
+// SearchImageRequest 文字搜索请求
 type SearchImageRequest struct {
-	ImageURL string `form:"image_url" json:"image_url"`
+	Query string `form:"query" json:"query"`
 }
 
+// SearchImageResponse 图片搜索结果
 type SearchImageResponse struct {
-	ID          int    `json:"id"`
-	Description string `json:"description"`
-	ImageURL    string `json:"image_url"`
-	Similarity  string `json:"similarity"`
+	ID          int     `json:"id"`
+	Description string  `json:"description"`
+	ImageURL    string  `json:"image_url"`
+	Similarity  float64 `json:"similarity"`
 }
